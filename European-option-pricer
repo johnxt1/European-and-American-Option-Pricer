@@ -25,7 +25,6 @@ class BinModel:
     def S(self, n, i):
         return self.S0 * (self.U ** i) * (self.D ** (n - i))
 
-
 # ======================= Binomial Lattice =======================
 class BinLattice:
     def __init__(self):
@@ -43,8 +42,13 @@ class BinLattice:
     def display(self, title):
         print(f"\n{title}:")
         for row in self.lattice:
-            print(' '.join(f"{v:7.3f}" if isinstance(v, (int, float)) else f"{v:7}" for v in row))
+            print(' '.join(str(int(v)) if isinstance(v, bool) else f"{v:7.3f}" for v in row))
 
+# ======================= Newton's binomial coefficient =======================
+def newton_symb(N, n):
+    if n < 0 or n > N:
+        return 0
+    return math.comb(N, n)
 
 # ======================= Option Base Class =======================
 class Option:
@@ -54,26 +58,29 @@ class Option:
     def payoff(self, S):
         raise NotImplementedError
 
-    # European price lattice
-    def price_european_lattice(self, model):
+    # European price by CRR formula at time 0
+    def price_european(self, model):
         p = model.risk_neut_prob()
-        lattice = BinLattice()
-        lattice.set_size(self.N)
+        price = 0.0
+        for n in range(self.N + 1):
+            price += newton_symb(self.N, n) * (p ** n) * ((1 - p) ** (self.N - n)) \
+                     * self.payoff(model.S(self.N, n)) / (model.R ** self.N)
+        return price
 
-        for i in range(self.N + 1):
-            lattice.set_node(self.N, i, self.payoff(model.S(self.N, i)))
+    # European price at specific node (n,i)
+    def price_european_at_node(self, model, n, i):
+        p = model.risk_neut_prob()
+        remaining_steps = self.N - n
+        price = 0.0
+        S_current = model.S(n, i)
+        for j in range(remaining_steps + 1):
+            prob = newton_symb(remaining_steps, j) * (p ** j) * ((1 - p) ** (remaining_steps - j))
+            S_N = S_current * (model.U ** j) * (model.D ** (remaining_steps - j))
+            price += prob * self.payoff(S_N)
+        return price / (model.R ** remaining_steps)
 
-        for n in range(self.N - 1, -1, -1):
-            for i in range(n + 1):
-                cont_val = (p * lattice.get_node(n + 1, i + 1) +
-                            (1 - p) * lattice.get_node(n + 1, i)) / model.R
-                lattice.set_node(n, i, cont_val)
-
-        lattice.display(title="European Price Lattice")
-        return lattice.get_node(0, 0)
-
-    # American price lattice with stopping tree
-    def price_american_lattice(self, model):
+    # American price with Snell envelope
+    def price_american_with_trees(self, model):
         p = model.risk_neut_prob()
         price_tree = BinLattice()
         stop_tree = BinLattice()
@@ -83,25 +90,21 @@ class Option:
         # Terminal payoffs
         for i in range(self.N + 1):
             price_tree.set_node(self.N, i, self.payoff(model.S(self.N, i)))
-            stop_tree.set_node(self.N, i, True)  # always exercise at maturity
+            stop_tree.set_node(self.N, i, True)  # Exercise at terminal
 
-        # Backward induction with Snell envelope
+        # Backward induction
         for n in range(self.N - 1, -1, -1):
             for i in range(n + 1):
                 cont_val = (p * price_tree.get_node(n+1, i+1) +
-                            (1 - p) * price_tree.get_node(n+1, i)) / model.R
+                            (1-p) * price_tree.get_node(n+1, i)) / model.R
                 exercise_val = self.payoff(model.S(n, i))
-                if exercise_val >= cont_val:
-                    price_tree.set_node(n, i, exercise_val)
-                    stop_tree.set_node(n, i, True)   # exercise
-                else:
+                if cont_val > exercise_val:
                     price_tree.set_node(n, i, cont_val)
-                    stop_tree.set_node(n, i, False)  # continue
-
-        price_tree.display(title="American Price Lattice")
-        stop_tree.display(title="American Stopping Tree (1=Exercise)")
-        return price_tree.get_node(0, 0)
-
+                    stop_tree.set_node(n, i, False)  # Continue
+                else:
+                    price_tree.set_node(n, i, exercise_val)
+                    stop_tree.set_node(n, i, True)   # Exercise
+        return price_tree, stop_tree
 
 # ======================= Call and Put Options =======================
 class Call(Option):
@@ -114,7 +117,6 @@ class Call(Option):
     def payoff(self, S):
         return max(S - self.K, 0)
 
-
 class Put(Option):
     def option_data(self):
         print("Enter put data:")
@@ -125,22 +127,52 @@ class Put(Option):
     def payoff(self, S):
         return max(self.K - S, 0)
 
-
 # ======================= Main Program =======================
 def main():
+    # Initialize the binomial model
     model = BinModel()
     model.get_input_data()
 
-    # Call option
-    call = Call()
-    call.option_data()
-    print("Call European price =", call.price_european_lattice(model))
-    print("Call American price =", call.price_american_lattice(model))
-    print()
+    # Ask user which option type (c/p)
+    option_type = input("Enter option type (c=Call, p=Put): ").strip().lower()
+    if option_type == "c":
+        option = Call()
+    elif option_type == "p":
+        option = Put()
+    else:
+        print("Invalid input, defaulting to Put.")
+        option = Put()
+    option.option_data()  # Ask for strike and steps
 
-    # Put option
-    put = Put()
-    put.option_data()
-    print("Put European price =", put.price_european_lattice(model))
-    print("Put American price =", put.price_american_lattice(model))
-    print()
+    # Ask user European or American (e/a)
+    option_style = input("Enter option style (e=European, a=American): ").strip().lower()
+    if option_style not in ('e', 'a'):
+        print("Invalid input, defaulting to European.")
+        option_style = 'e'
+
+    # Ask if user wants price at a specific node
+    specific_node = input("Price at specific node? (y/n): ").strip().lower()
+
+    if specific_node == 'y':
+        n = int(input("Enter node n (time step): "))
+        i = int(input("Enter node i: "))
+        if option_style == 'e':
+            price = option.price_european_at_node(model, n, i)
+            print(f"European option price at node ({n},{i}) = {price:.3f}")
+        else:
+            price_tree, stop_tree = option.price_american_with_trees(model)
+            price = price_tree.get_node(n, i)
+            exercise = stop_tree.get_node(n, i)
+            print(f"American option price at node ({n},{i}) = {price:.3f}")
+            print(f"Exercise? {'Yes' if exercise else 'No'}")
+    else:
+        if option_style == 'e':
+            price = option.price_european(model)
+            print(f"European option price at time 0 = {price:.3f}")
+            price_tree = option.price_european_tree(model)
+            price_tree.display(title="European Option Price Tree")
+        else:
+            price_tree, stop_tree = option.price_american_with_trees(model)
+            print(f"American option price at time 0 = {price_tree.get_node(0,0):.3f}")
+            price_tree.display(title="American Option Price Tree")
+            stop_tree.display(title="American Option Stopping Tree")
