@@ -57,7 +57,7 @@ class EurOption:
         p = model.risk_neutral_prob()
         price = 0.0
         for n in range(self.N + 1):
-             price += newton_symb(self.N, n) *(p ** n) * ((1 - p) ** (self.N - n)) *self.payoff(model.S(self.N, n)) /(model.R ** self.N)
+             price += newton_symb(self.N, n) *(p ** n) * ((1 - p) ** (self.N - n)) *self.payoff(model.stock_price(self.N, n)) /(model.R ** self.N)
         return price 
 
 
