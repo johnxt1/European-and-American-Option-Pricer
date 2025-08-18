@@ -33,10 +33,6 @@ class BinModel:
     def stock_price(self, n, i):
         return self.S0 * (self.U ** i) * (self.D ** (n - i))
 
-    def get_R(self):
-        return self.R
-
-
 def newton_symb(N, n):
     if n < 0 or n > N:
         return 0
