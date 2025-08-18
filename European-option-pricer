@@ -24,12 +24,27 @@ class BinModel:
 
     def S(self, n, i):
         return self.S0 * (self.U ** i) * (self.D ** (n - i))
-    
-# ======================= Newton's binomial coefficient =======================
-def newton_symb(N, n):
-    if n < 0 or n > N:
-        return 0
-    return math.comb(N, n)
+
+
+# ======================= Binomial Lattice =======================
+class BinLattice:
+    def __init__(self):
+        self.lattice = []
+
+    def set_size(self, N):
+        self.lattice = [[None]*(i+1) for i in range(N+1)]
+
+    def set_node(self, n, i, value):
+        self.lattice[n][i] = value
+
+    def get_node(self, n, i):
+        return self.lattice[n][i]
+
+    def display(self, title):
+        print(f"\n{title}:")
+        for row in self.lattice:
+            print(' '.join(f"{v:7.3f}" if isinstance(v, (int, float)) else f"{v:7}" for v in row))
+
 
 # ======================= Option Base Class =======================
 class Option:
@@ -39,27 +54,48 @@ class Option:
     def payoff(self, S):
         raise NotImplementedError
 
-    # European price by CRR
-    def price_european(self, model):
+    # European price by backward induction lattice
+    def price_european_lattice(self, model):
         p = model.risk_neut_prob()
-        price = 0.0
-        for n in range(self.N + 1):
-            price += newton_symb(self.N, n) * (p ** n) * ((1 - p) ** (self.N - n)) \
-                     * self.payoff(model.S(self.N, n)) / (model.R ** self.N)
-        return price
-    
+        lattice = BinLattice()
+        lattice.set_size(self.N)
 
-    # American price by backward induction
-    def price_american(self, model):
-        p = model.risk_neut_prob()
-        prices = [self.payoff(model.S(self.N, i)) for i in range(self.N + 1)]
+        # Terminal payoffs
+        for i in range(self.N + 1):
+            lattice.set_node(self.N, i, self.payoff(model.S(self.N, i)))
 
+        # Backward induction
         for n in range(self.N - 1, -1, -1):
             for i in range(n + 1):
-                cont_val = (p * prices[i + 1] + (1 - p) * prices[i]) / model.R
-                prices[i] = max(self.payoff(model.S(n, i)), cont_val)
-        return prices[0]
-    
+                cont_val = (p * lattice.get_node(n + 1, i + 1) +
+                            (1 - p) * lattice.get_node(n + 1, i)) / model.R
+                lattice.set_node(n, i, cont_val)
+
+        lattice.display(title="European Price Lattice")
+        return lattice.get_node(0, 0)
+
+    # American price with 
+    def price_american_lattice(self, model):
+        p = model.risk_neut_prob()
+        lattice = BinLattice()
+        lattice.set_size(self.N)
+
+        # Terminal payoffs
+        for i in range(self.N + 1):
+            lattice.set_node(self.N, i, self.payoff(model.S(self.N, i)))
+
+        # Backward induction
+        for n in range(self.N - 1, -1, -1):
+            for i in range(n + 1):
+                cont_val = (p * lattice.get_node(n+1, i+1) +
+                            (1 - p) * lattice.get_node(n+1, i)) / model.R
+                exercise_val = self.payoff(model.S(n, i))
+                lattice.set_node(n, i, max(cont_val, exercise_val))
+
+        lattice.display(title="American Price Lattice")
+        return lattice.get_node(0, 0)
+
+
 # ======================= Call and Put Options =======================
 class Call(Option):
     def option_data(self):
@@ -88,15 +124,17 @@ def main():
     model = BinModel()
     model.get_input_data()
 
+    # Call option
     call = Call()
     call.option_data()
-    print("Call European price =", call.price_european(model))
-    print("Call American price =", call.price_american(model))
+    print("Call European price =", call.price_european_lattice(model))
+    print("Call American price =", call.price_american_lattice(model))
     print()
 
+    # Put option
     put = Put()
     put.option_data()
-    print("Put European price =", put.price_european(model))
-    print("Put American price =", put.price_american(model))
+    print("Put European price =", put.price_european_lattice(model))
+    print("Put American price =", put.price_american_lattice(model))
     print()
 
