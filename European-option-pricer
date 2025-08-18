@@ -1,94 +1,102 @@
 import math
-import sys
 
+# ======================= Binomial Model =======================
 class BinModel:
     def __init__(self):
-        self.S0 = None
-        self.U = None
-        self.D = None
-        self.R = None
+        self.S0 = self.U = self.D = self.R = None
 
-    def input_data(self):
+    def get_input_data(self):
         self.S0 = float(input("Enter S0: "))
         self.U = float(input("Enter U: "))
         self.D = float(input("Enter D: "))
         self.R = float(input("Enter R: "))
-        print()
-        print(f"S0 = {self.S0}")
-        print(f"U  = {self.U}")
-        print(f"D  = {self.D}")
-        print(f"R  = {self.R}\n")
+        print(f"\nS0={self.S0}, U={self.U}, D={self.D}, R={self.R}\n")
 
         if self.S0 <= 0 or self.U <= 0 or self.D <= 0 or self.U <= self.D or self.R <= 0:
-            raise ValueError("Illegal data ranges")
+            print("Illegal data ranges"); exit(1)
         if self.R >= self.U or self.R <= self.D:
-            raise ValueError("Arbitrage exists")
+            print("Arbitrage exists"); exit(1)
 
-        print("Input data checked")
-        print("There is no arbitrage\n")
+        print("Input data checked — no arbitrage\n")
 
-    def risk_neutral_prob(self):
+    def risk_neut_prob(self):
         return (self.R - self.D) / (self.U - self.D)
 
-    def stock_price(self, n, i):
+    def S(self, n, i):
         return self.S0 * (self.U ** i) * (self.D ** (n - i))
-
+    
+# ======================= Newton's binomial coefficient =======================
 def newton_symb(N, n):
     if n < 0 or n > N:
         return 0
     return math.comb(N, n)
 
-
-class EurOption:
+# ======================= Option Base Class =======================
+class Option:
     def __init__(self):
-        self.N = None
-        self.K = None
-
-    def option_data(self):
-        self.N = int(input("Enter steps to expiry N: "))
-        self.K = float(input("Enter strike price K: "))
-        print(f"\nN = {self.N}")
-        print(f"K = {self.K}\n")
+        self.N = self.K = None
 
     def payoff(self, S):
-        raise NotImplementedError("Override payoff in subclass")
+        raise NotImplementedError
 
-    def price_by_crr(self, model: BinModel):
-        p = model.risk_neutral_prob()
+    # European price by CRR
+    def price_european(self, model):
+        p = model.risk_neut_prob()
         price = 0.0
         for n in range(self.N + 1):
-             price += newton_symb(self.N, n) *(p ** n) * ((1 - p) ** (self.N - n)) *self.payoff(model.stock_price(self.N, n)) /(model.R ** self.N)
-        return price 
+            price += newton_symb(self.N, n) * (p ** n) * ((1 - p) ** (self.N - n)) \
+                     * self.payoff(model.S(self.N, n)) / (model.R ** self.N)
+        return price
+    
 
+    # American price by backward induction
+    def price_american(self, model):
+        p = model.risk_neut_prob()
+        prices = [self.payoff(model.S(self.N, i)) for i in range(self.N + 1)]
 
-class EurCall(EurOption):
+        for n in range(self.N - 1, -1, -1):
+            for i in range(n + 1):
+                cont_val = (p * prices[i + 1] + (1 - p) * prices[i]) / model.R
+                prices[i] = max(self.payoff(model.S(n, i)), cont_val)
+        return prices[0]
+    
+# ======================= Call and Put Options =======================
+class Call(Option):
+    def option_data(self):
+        print("Enter call data:")
+        self.N = int(input("Enter steps to expiry N: "))
+        self.K = float(input("Enter strike price K: "))
+        print(f"N={self.N}, K={self.K}\n")
+
     def payoff(self, S):
-        return max(S - self.K, 0.0)
+        return max(S - self.K, 0)
 
 
-class EurPut(EurOption):
+class Put(Option):
+    def option_data(self):
+        print("Enter put data:")
+        self.N = int(input("Enter steps to expiry N: "))
+        self.K = float(input("Enter strike price K: "))
+        print(f"N={self.N}, K={self.K}\n")
+
     def payoff(self, S):
-        return max(self.K - S, 0.0)
+        return max(self.K - S, 0)
 
 
+# ======================= Main Program =======================
 def main():
     model = BinModel()
-    try:
-        model.input_data()
-    except ValueError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+    model.get_input_data()
 
-    
-    print("Enter European call option data:")
-    call_option = EurCall()
-    call_option.option_data()
-    call_price = call_option.price_by_crr(model)
-    print(f"European Call option price = {call_price:.4f}\n")
+    call = Call()
+    call.option_data()
+    print("Call European price =", call.price_european(model))
+    print("Call American price =", call.price_american(model))
+    print()
 
-    
-    print("Enter European put option data:")
-    put_option = EurPut()
-    put_option.option_data()
-    put_price = put_option.price_by_crr(model)
-    print(f"European Put option price = {put_price:.4f}\n")
+    put = Put()
+    put.option_data()
+    print("Put European price =", put.price_european(model))
+    print("Put American price =", put.price_american(model))
+    print()
+
