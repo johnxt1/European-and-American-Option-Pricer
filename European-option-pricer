@@ -54,17 +54,15 @@ class Option:
     def payoff(self, S):
         raise NotImplementedError
 
-    # European price by backward induction lattice
+    # European price lattice
     def price_european_lattice(self, model):
         p = model.risk_neut_prob()
         lattice = BinLattice()
         lattice.set_size(self.N)
 
-        # Terminal payoffs
         for i in range(self.N + 1):
             lattice.set_node(self.N, i, self.payoff(model.S(self.N, i)))
 
-        # Backward induction
         for n in range(self.N - 1, -1, -1):
             for i in range(n + 1):
                 cont_val = (p * lattice.get_node(n + 1, i + 1) +
@@ -74,26 +72,35 @@ class Option:
         lattice.display(title="European Price Lattice")
         return lattice.get_node(0, 0)
 
-    # American price with 
+    # American price lattice with stopping tree
     def price_american_lattice(self, model):
         p = model.risk_neut_prob()
-        lattice = BinLattice()
-        lattice.set_size(self.N)
+        price_tree = BinLattice()
+        stop_tree = BinLattice()
+        price_tree.set_size(self.N)
+        stop_tree.set_size(self.N)
 
         # Terminal payoffs
         for i in range(self.N + 1):
-            lattice.set_node(self.N, i, self.payoff(model.S(self.N, i)))
+            price_tree.set_node(self.N, i, self.payoff(model.S(self.N, i)))
+            stop_tree.set_node(self.N, i, True)  # always exercise at maturity
 
-        # Backward induction
+        # Backward induction with Snell envelope
         for n in range(self.N - 1, -1, -1):
             for i in range(n + 1):
-                cont_val = (p * lattice.get_node(n+1, i+1) +
-                            (1 - p) * lattice.get_node(n+1, i)) / model.R
+                cont_val = (p * price_tree.get_node(n+1, i+1) +
+                            (1 - p) * price_tree.get_node(n+1, i)) / model.R
                 exercise_val = self.payoff(model.S(n, i))
-                lattice.set_node(n, i, max(cont_val, exercise_val))
+                if exercise_val >= cont_val:
+                    price_tree.set_node(n, i, exercise_val)
+                    stop_tree.set_node(n, i, True)   # exercise
+                else:
+                    price_tree.set_node(n, i, cont_val)
+                    stop_tree.set_node(n, i, False)  # continue
 
-        lattice.display(title="American Price Lattice")
-        return lattice.get_node(0, 0)
+        price_tree.display(title="American Price Lattice")
+        stop_tree.display(title="American Stopping Tree (1=Exercise)")
+        return price_tree.get_node(0, 0)
 
 
 # ======================= Call and Put Options =======================
@@ -137,4 +144,3 @@ def main():
     print("Put European price =", put.price_european_lattice(model))
     print("Put American price =", put.price_american_lattice(model))
     print()
-
