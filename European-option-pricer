@@ -44,12 +44,6 @@ class BinLattice:
         for row in self.lattice:
             print(' '.join(str(int(v)) if isinstance(v, bool) else f"{v:7.3f}" for v in row))
 
-# ======================= Newton's binomial coefficient =======================
-def newton_symb(N, n):
-    if n < 0 or n > N:
-        return 0
-    return math.comb(N, n)
-
 # ======================= Option Base Class =======================
 class Option:
     def __init__(self):
@@ -58,26 +52,22 @@ class Option:
     def payoff(self, S):
         raise NotImplementedError
 
-    # European price by CRR formula at time 0
-    def price_european(self, model):
+    # European price tree via backward induction
+    def price_european_with_tree(self, model):
         p = model.risk_neut_prob()
-        price = 0.0
-        for n in range(self.N + 1):
-            price += newton_symb(self.N, n) * (p ** n) * ((1 - p) ** (self.N - n)) \
-                     * self.payoff(model.S(self.N, n)) / (model.R ** self.N)
-        return price
+        tree = BinLattice()
+        tree.set_size(self.N)
 
-    # European price at specific node (n,i)
-    def price_european_at_node(self, model, n, i):
-        p = model.risk_neut_prob()
-        remaining_steps = self.N - n
-        price = 0.0
-        S_current = model.S(n, i)
-        for j in range(remaining_steps + 1):
-            prob = newton_symb(remaining_steps, j) * (p ** j) * ((1 - p) ** (remaining_steps - j))
-            S_N = S_current * (model.U ** j) * (model.D ** (remaining_steps - j))
-            price += prob * self.payoff(S_N)
-        return price / (model.R ** remaining_steps)
+        # Terminal payoffs
+        for i in range(self.N+1):
+            tree.set_node(self.N, i, self.payoff(model.S(self.N, i)))
+
+        # Backward induction
+        for n in range(self.N-1, -1, -1):
+            for i in range(n+1):
+                cont_val = (p*tree.get_node(n+1, i+1) + (1-p)*tree.get_node(n+1, i)) / model.R
+                tree.set_node(n, i, cont_val)
+        return tree
 
     # American price with Snell envelope
     def price_american_with_trees(self, model):
@@ -88,22 +78,21 @@ class Option:
         stop_tree.set_size(self.N)
 
         # Terminal payoffs
-        for i in range(self.N + 1):
+        for i in range(self.N+1):
             price_tree.set_node(self.N, i, self.payoff(model.S(self.N, i)))
-            stop_tree.set_node(self.N, i, True)  # Exercise at terminal
+            stop_tree.set_node(self.N, i, True)
 
         # Backward induction
-        for n in range(self.N - 1, -1, -1):
-            for i in range(n + 1):
-                cont_val = (p * price_tree.get_node(n+1, i+1) +
-                            (1-p) * price_tree.get_node(n+1, i)) / model.R
+        for n in range(self.N-1, -1, -1):
+            for i in range(n+1):
+                cont_val = (p*price_tree.get_node(n+1, i+1) + (1-p)*price_tree.get_node(n+1, i)) / model.R
                 exercise_val = self.payoff(model.S(n, i))
                 if cont_val > exercise_val:
                     price_tree.set_node(n, i, cont_val)
-                    stop_tree.set_node(n, i, False)  # Continue
+                    stop_tree.set_node(n, i, False)
                 else:
                     price_tree.set_node(n, i, exercise_val)
-                    stop_tree.set_node(n, i, True)   # Exercise
+                    stop_tree.set_node(n, i, True)
         return price_tree, stop_tree
 
 # ======================= Call and Put Options =======================
@@ -127,37 +116,56 @@ class Put(Option):
     def payoff(self, S):
         return max(self.K - S, 0)
 
+# ======================= Hedging Helper =======================
+def compute_hedge_backwards(model, option, n, i, price_tree):
+    """
+    Compute hedging portfolio at node (n, i)
+    - x: stock holding
+    - y: cash holding
+    """
+    # Values at next step
+    V_up = price_tree.get_node(n + 1, i + 1)
+    V_down = price_tree.get_node(n + 1, i)
+
+    # Stock prices at next step
+    S_up = model.S(n + 1, i + 1)
+    S_down = model.S(n + 1, i)
+
+    # Delta (stock holding)
+    x = (V_up - V_down) / (S_up - S_down)
+
+    # Cash position
+    V_now = price_tree.get_node(n, i)
+    S_now = model.S(n, i)
+    y = V_now - x * S_now
+
+    return x, y
+
 # ======================= Main Program =======================
 def main():
     # Initialize the binomial model
     model = BinModel()
     model.get_input_data()
 
-    # Ask user which option type (c/p)
-    option_type = input("Enter option type (c=Call, p=Put): ").strip().lower()
-    if option_type == "c":
-        option = Call()
-    elif option_type == "p":
-        option = Put()
-    else:
-        print("Invalid input, defaulting to Put.")
-        option = Put()
-    option.option_data()  # Ask for strike and steps
-
-    # Ask user European or American (e/a)
+    # Option style
     option_style = input("Enter option style (e=European, a=American): ").strip().lower()
-    if option_style not in ('e', 'a'):
-        print("Invalid input, defaulting to European.")
-        option_style = 'e'
+    option_style = 'a' if option_style == 'a' else 'e'
 
-    # Ask if user wants price at a specific node
+    # Option type
+    option_type = input("Enter option type (c=Call, p=Put): ").strip().lower()
+    option = Call() if option_type == 'c' else Put()
+    option.option_data()
+
+    # Price at specific node?
     specific_node = input("Price at specific node? (y/n): ").strip().lower()
 
     if specific_node == 'y':
         n = int(input("Enter node n (time step): "))
         i = int(input("Enter node i: "))
+
         if option_style == 'e':
-            price = option.price_european_at_node(model, n, i)
+            price_tree = option.price_european_with_tree(model)
+            price = price_tree.get_node(n, i)
             print(f"European option price at node ({n},{i}) = {price:.3f}")
         else:
             price_tree, stop_tree = option.price_american_with_trees(model)
@@ -165,14 +173,21 @@ def main():
             exercise = stop_tree.get_node(n, i)
             print(f"American option price at node ({n},{i}) = {price:.3f}")
             print(f"Exercise? {'Yes' if exercise else 'No'}")
+
+        # Hedging portfolio
+        x, y = compute_hedge_backwards(model, option, n, i, price_tree)
+        print(f"Hedging portfolio: stock = {x:.3f}, cash = {y:.3f}")
+
     else:
         if option_style == 'e':
-            price = option.price_european(model)
+            price_tree = option.price_european_with_tree(model)
+            price = price_tree.get_node(0,0)
             print(f"European option price at time 0 = {price:.3f}")
-            price_tree = option.price_european_tree(model)
             price_tree.display(title="European Option Price Tree")
         else:
             price_tree, stop_tree = option.price_american_with_trees(model)
             print(f"American option price at time 0 = {price_tree.get_node(0,0):.3f}")
             price_tree.display(title="American Option Price Tree")
-            stop_tree.display(title="American Option Stopping Tree")
+            stop_tree.display(title="American Option Exercise Tree")
+
+    main()
