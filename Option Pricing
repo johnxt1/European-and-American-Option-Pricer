@@ -7,10 +7,10 @@ class BinModel:
 
     def get_input_data(self):
         print("Enter input data in multiplicative form (e.g., U=1.1, D=0.9, R=1.02)")
-        self.S0 = float(input("Enter S0: "))
-        self.U = float(input("Enter U: "))
-        self.D = float(input("Enter D: "))
-        self.R = float(input("Enter R: "))
+        self.S0 = float(input("Enter initial stock price S0 : "))
+        self.U = float(input("Enter up factor U: "))
+        self.D = float(input("Enter down factor D: "))
+        self.R = float(input("Enter risk-free rate R: "))
         print(f"\nS0={self.S0}, U={self.U}, D={self.D}, R={self.R}\n")
 
         if self.S0 <= 0 or self.U <= 0 or self.D <= 0 or self.U <= self.D or self.R <= 0:
@@ -105,7 +105,7 @@ class Call(Option):
         print(f"N={self.N}, K={self.K}\n")
 
         if self.N<0 or self.K<0:
-            print('illegal data range');exit(1)
+            print('N, K must be positive');exit(1)
 
     def payoff(self, S):
         return max(S - self.K, 0)
@@ -118,17 +118,17 @@ class Put(Option):
         print(f"N={self.N}, K={self.K}\n")
 
         if self.N<0 or self.K<0:
-            print('illegal data range');exit(1)
+            print('N, K must be positive');exit(1)
 
     def payoff(self, S):
         return max(self.K - S, 0)
 
-# ======================= Hedging Helper =======================
+# ======================= Hedging =======================
 def compute_hedging(model, option, n, i, price_tree):
     """
     Compute hedging portfolio at node (n, i)
-    - x: stock holding
-    - y: cash holding
+    - x: stock position
+    - y: cash position
     """
     # Values at next step
     V_up = price_tree.get_node(n + 1, i + 1)
